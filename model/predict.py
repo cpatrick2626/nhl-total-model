@@ -1,253 +1,189 @@
-import math
+# model/predict.py
 
-from data.moneypuck_scraper import get_xg_data
-from data.goalie_scraper import get_goalies
-from data.splits_scraper import get_bet_splits
-from model.market_tracker import track_lines, get_movement, detect_steam, steam_filter
-
-
-# -----------------------
-# POISSON
-# -----------------------
-def poisson(k, lam):
-    return (lam**k * math.exp(-lam)) / math.factorial(k)
-
-
-def prob_over(lam, line):
-    return sum(poisson(k, lam) for k in range(int(line) + 1, 12))
+from utils.tracker import load_bets, calculate_bankroll
+from utils.risk_engine import (
+    get_risk_multiplier,
+    calculate_risk_score,
+    get_risk_mode,
+    go_no_go_decision,
+    is_max_confidence,
+    max_conf_boost,
+    risk_adjusted_ev
+)
 
 
-def implied_prob(o):
-    return 1 / o
-
-
-# -----------------------
-# GOALIE ADJUSTMENT
-# -----------------------
-def goalie_adjustment(name):
-
-    if not name:
-        return 0
-
-    name = name.lower()
-
-    elite = ["shester", "helle", "vasilev", "saros"]
-    bad = ["rookie", "backup"]
-
-    if any(x in name for x in elite):
-        return -0.4
-
-    if any(x in name for x in bad):
-        return +0.5
-
-    return 0
-
-
-# -----------------------
-# PACE
-# -----------------------
-def pace_adjustment(home_stats, away_stats):
-
-    home_shots = home_stats.get("shots", 30)
-    away_shots = away_stats.get("shots", 30)
-
-    league_avg = 30
-
-    return ((home_shots + away_shots) / 2) / league_avg
-
-
-# -----------------------
-# PROJECTION
-# -----------------------
-def project_total(game, xg_data, goalies):
-
-    home = game.get("home_team")
-    away = game.get("away_team")
-
-    home_stats = xg_data.get(home, {})
-    away_stats = xg_data.get(away, {})
-
-    home_xgf = home_stats.get("xgf", 3.0)
-    away_xgf = away_stats.get("xgf", 3.0)
-
-    home_xga = home_stats.get("xga", 3.0)
-    away_xga = away_stats.get("xga", 3.0)
-
-    base = ((home_xgf + away_xga) + (away_xgf + home_xga)) / 2
-
-    pace = pace_adjustment(home_stats, away_stats)
-
-    home_goalie = goalies.get(home, "")
-    away_goalie = goalies.get(away, "")
-
-    goalie_adj = (
-        goalie_adjustment(home_goalie) +
-        goalie_adjustment(away_goalie)
-    )
-
-    lam = base * pace + goalie_adj
-
-    return round(lam, 2)
-
-
-# -----------------------
-# TOTALS EXTRACTION
-# -----------------------
+# -----------------------------
+# EXTRACT TOTALS MARKET
+# -----------------------------
 def extract_totals(game):
 
-    lines = []
+    best = None
 
-    for b in game.get("bookmakers", []):
-        for m in b.get("markets", []):
+    for book in game.get("bookmakers", []):
+        for market in book.get("markets", []):
+            if market.get("key") == "totals":
 
-            if m.get("key") in ["totals", "alternate_totals"]:
+                for outcome in market.get("outcomes", []):
+                    if outcome.get("name") == "Over":
 
-                for o in m.get("outcomes", []):
-                    lines.append({
-                        "line": o.get("point"),
-                        "price": o.get("price"),
-                        "type": o.get("name")
-                    })
+                        if not best or outcome["price"] > best["price"]:
+                            best = outcome
 
-    return lines
+    if not best:
+        return None
 
-
-# -----------------------
-# KELLY
-# -----------------------
-def kelly_fraction(p, odds, fraction=0.25):
-
-    b = odds - 1
-    k = ((p * odds) - 1) / b
-
-    if k <= 0:
-        return 0
-
-    return k * fraction
+    return {
+        "line": best.get("point"),
+        "odds": best.get("price")
+    }
 
 
-# -----------------------
-# RISK ADJUSTMENT
-# -----------------------
-def risk_adjustment(edge, line, has_goalie):
+# -----------------------------
+# SIMPLE PROJECTION MODEL
+# -----------------------------
+def project_total():
 
-    risk = 1.0
-
-    if line and line >= 6.5:
-        risk *= 0.8
-
-    if edge < 0.02:
-        risk *= 0.7
-
-    if not has_goalie:
-        risk *= 0.75
-
-    return risk
+    # baseline NHL average
+    return 6.0
 
 
-# -----------------------
-# EDGE TIER
-# -----------------------
-def edge_tier(edge):
+# -----------------------------
+# EV CALCULATION
+# -----------------------------
+def calc_ev(prob, odds):
 
-    if edge < 0.01:
-        return "NO BET"
-    elif edge < 0.03:
-        return "LEAN"
-    elif edge < 0.06:
-        return "PLAY"
+    if odds > 0:
+        implied = 100 / (odds + 100)
     else:
-        return "STRONG"
+        implied = abs(odds) / (abs(odds) + 100)
+
+    return prob - implied
 
 
-# -----------------------
+# -----------------------------
+# SCORE SYSTEM
+# -----------------------------
+def score_play(ev, edge):
+
+    score = 0
+
+    # EV weight
+    if ev >= 0.10:
+        score += 4
+    elif ev >= 0.07:
+        score += 3
+    elif ev >= 0.05:
+        score += 2
+
+    # edge weight
+    if edge >= 1.0:
+        score += 3
+    elif edge >= 0.6:
+        score += 2
+    elif edge >= 0.4:
+        score += 1
+
+    return score
+
+
+# -----------------------------
 # MAIN MODEL
-# -----------------------
+# -----------------------------
 def run_model(games):
 
-    xg_data = get_xg_data()
-    goalies = get_goalies()
-    splits, _ = get_bet_splits()
-
-    history = track_lines(games)
+    bets = load_bets()
+    bankroll = calculate_bankroll()
 
     results = []
 
+    parsed_games = []
+
+    # -----------------------------
+    # PREPROCESS GAMES
+    # -----------------------------
     for g in games:
 
-        lam = project_total(g, xg_data, goalies)
-
-        lines = extract_totals(g)
-
-        home = g.get("home_team")
-        away = g.get("away_team")
-
-        home_goalie = goalies.get(home)
-        away_goalie = goalies.get(away)
-
-        has_goalie = bool(home_goalie and away_goalie)
-
-        if not lines:
-            results.append({
-                "game": f"{away} vs {home}",
-                "projection": lam,
-                "bet": "NO ODDS",
-                "edge": 0,
-                "stake_pct": 0,
-                "confidence": "LOW"
-            })
+        market = extract_totals(g)
+        if not market:
             continue
 
-        best = None
+        line = market["line"]
+        odds = market["odds"]
 
-        for o in lines:
+        projection = project_total()
 
-            if o.get("line") is None:
-                continue
+        # crude probability from projection difference
+        edge = projection - line
+        prob = 0.5 + (edge * 0.1)
 
-            key = f"{g.get('id')}_{o['type']}_{o['line']}"
+        ev = calc_ev(prob, odds)
+        score = score_play(ev, abs(edge))
 
-            if o["type"] == "Over":
-                model_p = prob_over(lam, o["line"])
-            else:
-                model_p = 1 - prob_over(lam, o["line"])
+        parsed_games.append({
+            "game": f"{g.get('away_team')} vs {g.get('home_team')}",
+            "line": line,
+            "projection": projection,
+            "edge": edge,
+            "odds": odds,
+            "ev": ev,
+            "score": score,
+            "fd_edge": 0,   # placeholder for now
+            "steam": None,
+            "rlm": None
+        })
 
-            market_p = implied_prob(o["price"])
+    # -----------------------------
+    # GLOBAL DECISION
+    # -----------------------------
+    elite_count = sum(1 for g in parsed_games if g["score"] >= 8)
 
-            public_p = splits[0]["over_pct"] / 100 if splits else 0.5
+    decision = go_no_go_decision(bankroll, bets, elite_count)
 
-            final_p = (
-                model_p * 0.5 +
-                market_p * 0.3 +
-                public_p * 0.2
-            )
+    # -----------------------------
+    # FINAL LOOP
+    # -----------------------------
+    for g in parsed_games:
 
-            edge = final_p - market_p
+        if decision == "NO-GO":
+            continue
 
-            kelly = kelly_fraction(final_p, o["price"])
-            risk = risk_adjustment(edge, o["line"], has_goalie)
-            stake = kelly * risk
+        risk_score = calculate_risk_score(bankroll, bets)
+        risk_mode = get_risk_mode(risk_score)
 
-            movement = get_movement(history, key)
-            steam = detect_steam(history, key)
-            signal = steam_filter(edge, movement, steam)
+        adj_ev = risk_adjusted_ev(g["ev"], risk_score)
 
-            if not best or edge > best["edge"]:
-                best = {
-                    "bet": f"{o['type']} {o['line']}",
-                    "odds": o["price"],
-                    "edge": round(edge, 4),
-                    "stake_pct": round(stake * 100, 2),
-                    "confidence": edge_tier(edge),
-                    "movement": movement,
-                    "steam": steam,
-                    "signal": signal
-                }
+        max_conf = is_max_confidence(
+            g["score"],
+            g["ev"],
+            g["fd_edge"],
+            g["steam"],
+            g["rlm"],
+            risk_mode
+        )
+
+        # base bet size (2%)
+        base_bet = bankroll * 0.02
+
+        risk_mult = get_risk_multiplier(bets, bankroll)
+        boost = max_conf_boost(max_conf)
+
+        bet_size = base_bet * risk_mult * boost
 
         results.append({
-            "game": f"{away} vs {home}",
-            "projection": lam,
-            **best
+            "game": g["game"],
+            "line": g["line"],
+            "projection": g["projection"],
+            "ev": round(g["ev"], 4),
+            "adj_ev": round(adj_ev, 4),
+            "score": g["score"],
+            "fd_edge": g["fd_edge"],
+            "steam": g["steam"],
+            "rlm": g["rlm"],
+            "bet_size": round(bet_size, 2),
+            "risk_mode": risk_mode,
+            "risk_score": risk_score,
+            "max_conf": max_conf,
+            "go_decision": decision
         })
 
     return results
