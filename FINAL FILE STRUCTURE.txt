@@ -1,0 +1,26 @@
+nhl-total-model/
+│
+├── app.py
+├── config.py
+├── requirements.txt
+├── .gitignore
+│
+├── data/
+│   └── fetch_odds.py
+│
+├── model/
+│   ├── features.py
+│   ├── predict.py
+│   ├── simulate.py
+│   ├── ev.py
+│   ├── kelly.py
+│   ├── market.py
+│   └── timing.py
+│
+├── utils/
+│   ├── cache.py
+│   └── api_manager.py
+│
+├── data_cache/
+└── .streamlit/
+    └── config.toml

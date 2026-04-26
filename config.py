@@ -1,0 +1,6 @@
+import os
+
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+
+LEAGUE_AVG_SV = 0.905
+LEAGUE_AVG_SHOTS = 60
