@@ -9,11 +9,11 @@ from model.predict import run_model
 # PAGE CONFIG
 # -----------------------
 st.set_page_config(layout="wide")
-st.title("🏒 NHL Over/Under Model")
+st.title("🏒 NHL Over / Under Model")
 
 
 # -----------------------
-# LOAD DATA FUNCTION
+# LOAD DATA
 # -----------------------
 def load_data(force=False):
     data, usage = get_odds(force_refresh=force)
@@ -48,12 +48,11 @@ st.sidebar.write("Remaining:", usage.get("remaining", "N/A"))
 games = st.session_state.get("games", [])
 
 st.subheader("📅 Games")
-
 st.write(f"Total Games: {len(games)}")
 
 
 # -----------------------
-# NO DATA CASE
+# NO DATA
 # -----------------------
 if not games:
     st.warning("No games returned from API.")
@@ -71,7 +70,7 @@ if not results:
 
 
 # -----------------------
-# DISPLAY GAME LIST
+# MATCHUP LIST
 # -----------------------
 st.subheader("🧾 Matchups")
 
@@ -84,17 +83,49 @@ st.write(game_list)
 
 
 # -----------------------
-# DISPLAY MODEL OUTPUT
+# MODEL OUTPUT TABLE
 # -----------------------
 st.subheader("📊 Over / Under Picks")
 
 df = pd.DataFrame(results)
 
-# Clean ordering
-cols = ["game", "line", "projection", "pick", "confidence", "edge"]
-df = df[[c for c in cols if c in df.columns]]
+# Sort by best edges
+if "edge" in df.columns:
+    df = df.sort_values(by="edge", ascending=False)
+
+# Clean column order
+columns_order = [
+    "game",
+    "line",
+    "projection",
+    "edge",
+    "pick",
+    "confidence",
+    "market_spread",
+    "steam"
+]
+
+df = df[[c for c in columns_order if c in df.columns]]
 
 st.dataframe(df, use_container_width=True)
+
+
+# -----------------------
+# BEST BETS ONLY
+# -----------------------
+st.subheader("🔥 Best Plays")
+
+if "pick" in df.columns:
+    plays = df[
+        (df["pick"] != "NO BET") &
+        (df["confidence"].isin(["MEDIUM", "HIGH"]))
+    ]
+
+    if not plays.empty:
+        st.success(f"{len(plays)} playable bets found")
+        st.dataframe(plays, use_container_width=True)
+    else:
+        st.info("No strong plays right now")
 
 
 # -----------------------
@@ -103,23 +134,19 @@ st.dataframe(df, use_container_width=True)
 st.subheader("📌 Summary")
 
 if "pick" in df.columns:
-    plays = df[df["pick"] != "NO BET"]
+    over_count = len(df[df["pick"] == "OVER"])
+    under_count = len(df[df["pick"] == "UNDER"])
 
-    if not plays.empty:
-        st.success(f"{len(plays)} suggested plays")
-
-        st.dataframe(plays, use_container_width=True)
-    else:
-        st.info("No strong plays right now")
+    st.write(f"Over Picks: {over_count}")
+    st.write(f"Under Picks: {under_count}")
 
 
 # -----------------------
-# DEBUG SECTION
+# DEBUG (KEEP THIS)
 # -----------------------
 with st.expander("🔍 Debug Data"):
-
-    st.write("Sample Game Raw:")
+    st.write("Raw Game Sample:")
     st.write(games[0])
 
-    st.write("Sample Model Output:")
+    st.write("Model Output Sample:")
     st.write(results[0])
