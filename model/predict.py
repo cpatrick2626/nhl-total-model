@@ -3,6 +3,7 @@ import math
 from data.moneypuck_scraper import get_xg_data
 from data.goalie_scraper import get_goalies
 from data.splits_scraper import get_bet_splits
+from model.market_tracker import track_lines, get_movement, detect_steam, steam_filter
 
 
 # -----------------------
@@ -52,9 +53,7 @@ def pace_adjustment(home_stats, away_stats):
 
     league_avg = 30
 
-    pace = ((home_shots + away_shots) / 2) / league_avg
-
-    return pace
+    return ((home_shots + away_shots) / 2) / league_avg
 
 
 # -----------------------
@@ -101,9 +100,9 @@ def extract_totals(game):
     for b in game.get("bookmakers", []):
         for m in b.get("markets", []):
 
-            if m["key"] in ["totals", "alternate_totals"]:
+            if m.get("key") in ["totals", "alternate_totals"]:
 
-                for o in m["outcomes"]:
+                for o in m.get("outcomes", []):
                     lines.append({
                         "line": o.get("point"),
                         "price": o.get("price"),
@@ -114,12 +113,11 @@ def extract_totals(game):
 
 
 # -----------------------
-# KELLY (FRACTIONAL)
+# KELLY
 # -----------------------
 def kelly_fraction(p, odds, fraction=0.25):
 
     b = odds - 1
-
     k = ((p * odds) - 1) / b
 
     if k <= 0:
@@ -135,15 +133,12 @@ def risk_adjustment(edge, line, has_goalie):
 
     risk = 1.0
 
-    # high total = higher variance
     if line and line >= 6.5:
         risk *= 0.8
 
-    # weak edge
     if edge < 0.02:
         risk *= 0.7
 
-    # no goalie info
     if not has_goalie:
         risk *= 0.75
 
@@ -173,6 +168,8 @@ def run_model(games):
     xg_data = get_xg_data()
     goalies = get_goalies()
     splits, _ = get_bet_splits()
+
+    history = track_lines(games)
 
     results = []
 
@@ -205,8 +202,10 @@ def run_model(games):
 
         for o in lines:
 
-            if o["line"] is None:
+            if o.get("line") is None:
                 continue
+
+            key = f"{g.get('id')}_{o['type']}_{o['line']}"
 
             if o["type"] == "Over":
                 model_p = prob_over(lam, o["line"])
@@ -226,10 +225,12 @@ def run_model(games):
             edge = final_p - market_p
 
             kelly = kelly_fraction(final_p, o["price"])
-
             risk = risk_adjustment(edge, o["line"], has_goalie)
-
             stake = kelly * risk
+
+            movement = get_movement(history, key)
+            steam = detect_steam(history, key)
+            signal = steam_filter(edge, movement, steam)
 
             if not best or edge > best["edge"]:
                 best = {
@@ -237,7 +238,10 @@ def run_model(games):
                     "odds": o["price"],
                     "edge": round(edge, 4),
                     "stake_pct": round(stake * 100, 2),
-                    "confidence": edge_tier(edge)
+                    "confidence": edge_tier(edge),
+                    "movement": movement,
+                    "steam": steam,
+                    "signal": signal
                 }
 
         results.append({
