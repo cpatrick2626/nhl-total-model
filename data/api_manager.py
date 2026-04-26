@@ -3,17 +3,33 @@ import json
 import time
 import os
 
-API_KEY = "e5c1ba4c3752d7fec9907b519034a574"
+# -----------------------
+# API KEY (SAFE LOAD)
+# -----------------------
+try:
+    import streamlit as st
+    API_KEY = st.secrets.get("ODDS_API_KEY", "")
+except:
+    API_KEY = os.getenv("ODDS_API_KEY", "")
 
+# -----------------------
+# CACHE CONFIG
+# -----------------------
 CACHE_FILE = "cache/odds.json"
-CACHE_TTL = 600
+CACHE_TTL = 600  # seconds
 
 
+# -----------------------
+# CACHE HELPERS
+# -----------------------
 def load_cache():
     if not os.path.exists(CACHE_FILE):
         return None
-    with open(CACHE_FILE) as f:
-        return json.load(f)
+    try:
+        with open(CACHE_FILE) as f:
+            return json.load(f)
+    except:
+        return None
 
 
 def save_cache(data, usage):
@@ -26,18 +42,16 @@ def save_cache(data, usage):
         }, f)
 
 
-def valid(cache):
+def is_cache_valid(cache):
     if not cache:
         return False
-    return (time.time() - cache["timestamp"]) < CACHE_TTL
+    return (time.time() - cache.get("timestamp", 0)) < CACHE_TTL
 
 
+# -----------------------
+# USAGE PARSER (FIXED)
+# -----------------------
 def parse_usage(headers):
-    """
-    Safely parse API usage headers.
-    Returns real values OR 'N/A' if not provided.
-    """
-
     used = headers.get("x-requests-used")
     remaining = headers.get("x-requests-remaining")
 
@@ -59,42 +73,60 @@ def parse_usage(headers):
         }
 
 
-def fetch():
+# -----------------------
+# FETCH ODDS
+# -----------------------
+def fetch_odds():
 
     url = "https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds"
 
     params = {
         "apiKey": API_KEY,
-        "regions": "us",
-        "markets": "h2h,totals,alternate_totals",
+        "regions": "us,eu",  # 🔥 more coverage
+        "markets": "h2h,totals",  # 🔥 avoid over-filtering
         "oddsFormat": "decimal"
     }
 
     try:
-        r = requests.get(url, params=params)
+        r = requests.get(url, params=params, timeout=10)
+
+        # DEBUG (safe)
+        # print("STATUS:", r.status_code)
+        # print("HEADERS:", dict(r.headers))
 
         if r.status_code != 200:
             return [], {"used": "N/A", "remaining": "N/A"}
 
         data = r.json()
 
-        # 🔥 FIXED HERE
         usage = parse_usage(r.headers)
 
         return data, usage
 
-    except:
+    except Exception as e:
+        # print("FETCH ERROR:", e)
         return [], {"used": "N/A", "remaining": "N/A"}
 
 
+# -----------------------
+# MAIN ENTRY
+# -----------------------
 def get_odds(force_refresh=False):
 
     cache = load_cache()
 
-    if not force_refresh and valid(cache):
-        return cache["data"], cache["usage"]
+    if not force_refresh and is_cache_valid(cache):
+        return cache.get("data", []), cache.get("usage", {})
 
-    data, usage = fetch()
+    data, usage = fetch_odds()
+
+    # ensure safe types
+    if not isinstance(data, list):
+        data = []
+
+    if not isinstance(usage, dict):
+        usage = {"used": "N/A", "remaining": "N/A"}
+
     save_cache(data, usage)
 
     return data, usage
