@@ -1,11 +1,14 @@
 def extract_best_market(game):
+    if "bookmakers" not in game:
+        return None
+
     best = None
 
-    for book in game["bookmakers"]:
-        for m in book["markets"]:
-            if m["key"] == "totals":
-                for o in m["outcomes"]:
-                    if o["name"] == "Over":
+    for book in game.get("bookmakers", []):
+        for m in book.get("markets", []):
+            if m.get("key") == "totals":
+                for o in m.get("outcomes", []):
+                    if o.get("name") == "Over":
                         if not best or o["price"] > best["price"]:
                             best = {
                                 "odds": o["price"],
