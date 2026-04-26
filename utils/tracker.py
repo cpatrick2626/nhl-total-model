@@ -1,15 +1,15 @@
 import json
-from datetime import datetime
+import os
 
-FILE = "bet_history.json"
+FILE = "bets.json"
 
 
 def load_bets():
-    try:
-        with open(FILE) as f:
-            return json.load(f)
-    except:
+    if not os.path.exists(FILE):
         return []
+
+    with open(FILE) as f:
+        return json.load(f)
 
 
 def save_bet(bet):
@@ -20,11 +20,21 @@ def save_bet(bet):
         json.dump(bets, f, indent=2)
 
 
-def calculate_bankroll(start=1000):
+def calculate_bankroll(start=100):
     bets = load_bets()
     bankroll = start
 
     for b in bets:
-        bankroll += b["profit"]
+        bankroll += b.get("profit", 0)
 
     return bankroll
+
+
+def implied_prob(o):
+    return 100/(o+100) if o > 0 else abs(o)/(abs(o)+100)
+
+
+def calculate_clv(open_odds, closing_odds):
+    if closing_odds is None:
+        return None
+    return implied_prob(open_odds) - implied_prob(closing_odds)
