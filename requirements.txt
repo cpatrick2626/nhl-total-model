@@ -1,5 +1,5 @@
 streamlit
-requests
-numpy
 pandas
-streamlit-autorefresh
+requests
+beautifulsoup4
+lxml
