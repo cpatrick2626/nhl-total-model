@@ -15,13 +15,16 @@ def prob_under(lam, line):
 
 
 def implied_prob(o):
-    return 100/(o+100) if o > 0 else abs(o)/(abs(o)+100)
+    return 1 / o  # decimal odds
 
 
 def project_total():
     return 6.0
 
 
+# -----------------------
+# ALT TOTALS
+# -----------------------
 def extract_alt_lines(game):
 
     lines = []
@@ -29,6 +32,28 @@ def extract_alt_lines(game):
     for book in game.get("bookmakers", []):
         for m in book.get("markets", []):
             if m.get("key") == "alternate_totals":
+
+                for o in m.get("outcomes", []):
+                    lines.append({
+                        "book": book.get("key"),
+                        "line": o.get("point"),
+                        "price": o.get("price"),
+                        "type": o.get("name")
+                    })
+
+    return lines
+
+
+# -----------------------
+# MAIN TOTALS (NEW)
+# -----------------------
+def extract_main_totals(game):
+
+    lines = []
+
+    for book in game.get("bookmakers", []):
+        for m in book.get("markets", []):
+            if m.get("key") == "totals":
 
                 for o in m.get("outcomes", []):
                     lines.append({
@@ -54,6 +79,9 @@ def best_prices(lines):
     return list(best.values())
 
 
+# -----------------------
+# MAIN MODEL
+# -----------------------
 def run_model(games):
 
     splits_data, _ = get_bet_splits()
@@ -64,13 +92,19 @@ def run_model(games):
 
         lam = project_total()
 
+        # 🔥 FIX: ALT → FALLBACK TO MAIN TOTALS
         lines = extract_alt_lines(g)
+
+        if not lines:
+            lines = extract_main_totals(g)
+
         lines = best_prices(lines)
 
         if not lines:
             results.append({
                 "game": f"{g.get('away_team')} vs {g.get('home_team')}",
-                "bet": "NO ODDS"
+                "bet": "NO TOTALS AVAILABLE",
+                "note": "Only moneyline markets returned"
             })
             continue
 
@@ -102,6 +136,7 @@ def run_model(games):
             if not best or edge > best["edge"]:
                 best = {
                     "bet": f"{o['type']} {o['line']}",
+                    "book": o["book"],
                     "odds": o["price"],
                     "edge": round(edge, 3),
                     "decision": decision
