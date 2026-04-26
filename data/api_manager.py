@@ -5,7 +5,7 @@ import os
 
 API_KEY = "YOUR_API_KEY"
 CACHE_FILE = "cache/odds.json"
-CACHE_TTL = 300
+CACHE_TTL = 600  # 10 min
 
 
 def _load_cache():
@@ -27,20 +27,19 @@ def _save_cache(data, usage):
         }, f)
 
 
-def _is_cache_valid(cache):
+def _valid(cache):
     if not cache:
         return False
-
     return (time.time() - cache["timestamp"]) < CACHE_TTL
 
 
-def fetch_from_api():
+def _fetch():
     url = "https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds"
 
     params = {
         "apiKey": API_KEY,
         "regions": "us",
-        "markets": "totals",
+        "markets": "totals,alternate_totals",
         "oddsFormat": "american"
     }
 
@@ -59,13 +58,13 @@ def get_odds(force_refresh=False):
 
     cache = _load_cache()
 
-    if not force_refresh and _is_cache_valid(cache):
+    if not force_refresh and _valid(cache):
         return cache["data"], cache["usage"]
 
     if cache and cache["usage"]["remaining"] <= 1:
         return cache["data"], cache["usage"]
 
-    data, usage = fetch_from_api()
+    data, usage = _fetch()
     _save_cache(data, usage)
 
     return data, usage
