@@ -1,140 +1,124 @@
+import math
+
 from utils.tracker import load_bets, calculate_bankroll
-from utils.risk_engine import (
-    get_risk_multiplier,
-    calculate_risk_score,
-    get_risk_mode,
-    go_no_go_decision,
-    is_max_confidence,
-    max_conf_boost,
-    risk_adjusted_ev
-)
 
 
-def extract_totals(game):
-
-    best = None
-
-    for book in game.get("bookmakers", []):
-        for market in book.get("markets", []):
-            if market.get("key") == "totals":
-                for outcome in market.get("outcomes", []):
-                    if outcome.get("name") == "Over":
-                        if not best or outcome["price"] > best["price"]:
-                            best = outcome
-
-    if not best:
-        return None
-
-    return {
-        "line": best.get("point"),
-        "odds": best.get("price")
-    }
+# -----------------------
+# POISSON
+# -----------------------
+def poisson_pmf(k, lam):
+    return (lam**k * math.exp(-lam)) / math.factorial(k)
 
 
+def prob_over(lam, line):
+    return sum(poisson_pmf(k, lam) for k in range(int(line)+1, 12))
+
+
+def prob_under(lam, line):
+    return 1 - prob_over(lam, line)
+
+
+def implied_prob(o):
+    return 100/(o+100) if o > 0 else abs(o)/(abs(o)+100)
+
+
+# -----------------------
+# TEAM MODEL (BASIC)
+# -----------------------
 def project_total():
     return 6.0
 
 
-def calc_ev(prob, odds):
+# -----------------------
+# EXTRACT ALL BOOKS
+# -----------------------
+def extract_alt_lines(game):
 
-    if odds > 0:
-        implied = 100 / (odds + 100)
-    else:
-        implied = abs(odds) / (abs(odds) + 100)
+    lines = []
 
-    return prob - implied
+    for book in game.get("bookmakers", []):
+        for m in book.get("markets", []):
+            if m.get("key") == "alternate_totals":
 
+                for o in m.get("outcomes", []):
+                    lines.append({
+                        "book": book.get("key"),
+                        "line": o.get("point"),
+                        "price": o.get("price"),
+                        "type": o.get("name")
+                    })
 
-def score_play(ev, edge):
-
-    score = 0
-
-    if ev >= 0.10:
-        score += 4
-    elif ev >= 0.07:
-        score += 3
-    elif ev >= 0.05:
-        score += 2
-
-    if edge >= 1.0:
-        score += 3
-    elif edge >= 0.6:
-        score += 2
-    elif edge >= 0.4:
-        score += 1
-
-    return score
+    return lines
 
 
+# -----------------------
+# BEST PRICE PER LINE
+# -----------------------
+def best_prices(lines):
+
+    best = {}
+
+    for o in lines:
+        key = (o["type"], o["line"])
+
+        if key not in best or o["price"] > best[key]["price"]:
+            best[key] = o
+
+    return list(best.values())
+
+
+# -----------------------
+# EDGE CALC
+# -----------------------
+def evaluate(lam, lines):
+
+    best = None
+
+    for o in lines:
+
+        prob = prob_over(lam, o["line"]) if o["type"] == "Over" else prob_under(lam, o["line"])
+
+        ev = prob - implied_prob(o["price"])
+
+        if not best or ev > best["ev"]:
+            best = {
+                "bet": f"{o['type']} {o['line']}",
+                "book": o["book"],
+                "odds": o["price"],
+                "prob": round(prob, 3),
+                "ev": round(ev, 3)
+            }
+
+    return best
+
+
+# -----------------------
+# MAIN
+# -----------------------
 def run_model(games):
 
     bets = load_bets()
-    bankroll = calculate_bankroll(start=100)
-
-    parsed = []
-
-    for g in games:
-
-        market = extract_totals(g)
-        if not market:
-            continue
-
-        line = market["line"]
-        odds = market["odds"]
-
-        projection = project_total()
-        edge = projection - line
-
-        prob = 0.5 + (edge * 0.1)
-        ev = calc_ev(prob, odds)
-        score = score_play(ev, abs(edge))
-
-        parsed.append({
-            "game": f"{g.get('away_team')} vs {g.get('home_team')}",
-            "line": line,
-            "projection": projection,
-            "ev": ev,
-            "score": score,
-            "fd_edge": 0,
-            "steam": None,
-            "rlm": None
-        })
-
-    elite_count = sum(1 for g in parsed if g["score"] >= 8)
-    decision = go_no_go_decision(bankroll, bets, elite_count)
+    bankroll = calculate_bankroll()
 
     results = []
 
-    for g in parsed:
+    for g in games:
 
-        if decision == "NO-GO":
-            continue
+        lam = project_total()
 
-        risk_score = calculate_risk_score(bankroll, bets)
-        risk_mode = get_risk_mode(risk_score)
+        lines = extract_alt_lines(g)
+        lines = best_prices(lines)
 
-        adj_ev = risk_adjusted_ev(g["ev"], risk_score)
-
-        max_conf = is_max_confidence(
-            g["score"],
-            g["ev"],
-            g["fd_edge"],
-            g["steam"],
-            g["rlm"],
-            risk_mode
-        )
-
-        base = bankroll * 0.02
-        bet = base * get_risk_multiplier(bets, bankroll) * max_conf_boost(max_conf)
+        best = evaluate(lam, lines) if lines else None
 
         results.append({
-            **g,
-            "adj_ev": adj_ev,
-            "bet_size": round(bet, 2),
-            "risk_mode": risk_mode,
-            "risk_score": risk_score,
-            "max_conf": max_conf,
-            "go_decision": decision
+            "game": f"{g.get('away_team')} vs {g.get('home_team')}",
+            "projection": lam,
+            "bet": best["bet"] if best else "PASS",
+            "book": best["book"] if best else None,
+            "odds": best["odds"] if best else None,
+            "prob": best["prob"] if best else None,
+            "ev": best["ev"] if best else None
         })
 
     return results
