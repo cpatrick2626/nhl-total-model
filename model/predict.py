@@ -21,7 +21,7 @@ def implied_prob(o):
 
 
 # -----------------------
-# GOALIE MODEL
+# GOALIE ADJUSTMENT
 # -----------------------
 def goalie_adjustment(name):
 
@@ -43,7 +43,7 @@ def goalie_adjustment(name):
 
 
 # -----------------------
-# PACE MODEL (NEW)
+# PACE
 # -----------------------
 def pace_adjustment(home_stats, away_stats):
 
@@ -58,7 +58,7 @@ def pace_adjustment(home_stats, away_stats):
 
 
 # -----------------------
-# PROJECTION ENGINE
+# PROJECTION
 # -----------------------
 def project_total(game, xg_data, goalies):
 
@@ -68,20 +68,16 @@ def project_total(game, xg_data, goalies):
     home_stats = xg_data.get(home, {})
     away_stats = xg_data.get(away, {})
 
-    # xG inputs
     home_xgf = home_stats.get("xgf", 3.0)
     away_xgf = away_stats.get("xgf", 3.0)
 
     home_xga = home_stats.get("xga", 3.0)
     away_xga = away_stats.get("xga", 3.0)
 
-    # base projection
     base = ((home_xgf + away_xga) + (away_xgf + home_xga)) / 2
 
-    # pace
     pace = pace_adjustment(home_stats, away_stats)
 
-    # goalie impact
     home_goalie = goalies.get(home, "")
     away_goalie = goalies.get(away, "")
 
@@ -118,6 +114,58 @@ def extract_totals(game):
 
 
 # -----------------------
+# KELLY (FRACTIONAL)
+# -----------------------
+def kelly_fraction(p, odds, fraction=0.25):
+
+    b = odds - 1
+
+    k = ((p * odds) - 1) / b
+
+    if k <= 0:
+        return 0
+
+    return k * fraction
+
+
+# -----------------------
+# RISK ADJUSTMENT
+# -----------------------
+def risk_adjustment(edge, line, has_goalie):
+
+    risk = 1.0
+
+    # high total = higher variance
+    if line and line >= 6.5:
+        risk *= 0.8
+
+    # weak edge
+    if edge < 0.02:
+        risk *= 0.7
+
+    # no goalie info
+    if not has_goalie:
+        risk *= 0.75
+
+    return risk
+
+
+# -----------------------
+# EDGE TIER
+# -----------------------
+def edge_tier(edge):
+
+    if edge < 0.01:
+        return "NO BET"
+    elif edge < 0.03:
+        return "LEAN"
+    elif edge < 0.06:
+        return "PLAY"
+    else:
+        return "STRONG"
+
+
+# -----------------------
 # MAIN MODEL
 # -----------------------
 def run_model(games):
@@ -134,19 +182,31 @@ def run_model(games):
 
         lines = extract_totals(g)
 
-        # no odds → still show projection
+        home = g.get("home_team")
+        away = g.get("away_team")
+
+        home_goalie = goalies.get(home)
+        away_goalie = goalies.get(away)
+
+        has_goalie = bool(home_goalie and away_goalie)
+
         if not lines:
             results.append({
-                "game": f"{g.get('away_team')} vs {g.get('home_team')}",
+                "game": f"{away} vs {home}",
                 "projection": lam,
                 "bet": "NO ODDS",
-                "edge": 0
+                "edge": 0,
+                "stake_pct": 0,
+                "confidence": "LOW"
             })
             continue
 
         best = None
 
         for o in lines:
+
+            if o["line"] is None:
+                continue
 
             if o["type"] == "Over":
                 model_p = prob_over(lam, o["line"])
@@ -165,15 +225,23 @@ def run_model(games):
 
             edge = final_p - market_p
 
+            kelly = kelly_fraction(final_p, o["price"])
+
+            risk = risk_adjustment(edge, o["line"], has_goalie)
+
+            stake = kelly * risk
+
             if not best or edge > best["edge"]:
                 best = {
                     "bet": f"{o['type']} {o['line']}",
                     "odds": o["price"],
-                    "edge": round(edge, 3)
+                    "edge": round(edge, 4),
+                    "stake_pct": round(stake * 100, 2),
+                    "confidence": edge_tier(edge)
                 }
 
         results.append({
-            "game": f"{g.get('away_team')} vs {g.get('home_team')}",
+            "game": f"{away} vs {home}",
             "projection": lam,
             **best
         })
