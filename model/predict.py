@@ -1,4 +1,6 @@
 import numpy as np
+import random
+
 
 def extract_totals(game):
     lines = []
@@ -16,23 +18,6 @@ def extract_totals(game):
     return round(sum(lines) / len(lines), 2)
 
 
-def get_market_spread(game):
-    """Measure disagreement between books (proxy for volatility/value)"""
-    lines = []
-
-    for book in game.get("bookmakers", []):
-        for market in book.get("markets", []):
-            if market.get("key") == "totals":
-                for outcome in market.get("outcomes", []):
-                    if "point" in outcome:
-                        lines.append(outcome["point"])
-
-    if len(lines) < 2:
-        return 0
-
-    return max(lines) - min(lines)
-
-
 def run_model(games):
     results = []
 
@@ -46,31 +31,29 @@ def run_model(games):
             continue
 
         # -----------------------
-        # REALISTIC PROJECTION ENGINE
+        # FORCE REAL VARIATION
         # -----------------------
-
-        # Base = market line (Vegas is sharp whether you like it or not)
         projection = line
 
-        # Add randomness (simulate team variance)
-        projection += np.random.normal(0, 0.35)
+        # Stronger variation so it actually shows
+        projection += random.uniform(-1.0, 1.0)
 
-        # Add adjustment for line extremes
+        # Slight bias logic
         if line <= 5.5:
-            projection += 0.25   # low totals tend to go over slightly
+            projection += 0.3
         elif line >= 6.5:
-            projection -= 0.25   # high totals slightly under
+            projection -= 0.3
 
         projection = round(projection, 2)
 
         # -----------------------
-        # EDGE CALCULATION
+        # EDGE
         # -----------------------
         edge = round(projection - line, 2)
 
-        if edge > 0.25:
+        if edge > 0.3:
             pick = "OVER"
-        elif edge < -0.25:
+        elif edge < -0.3:
             pick = "UNDER"
         else:
             pick = "NO BET"
@@ -78,24 +61,14 @@ def run_model(games):
         # -----------------------
         # CONFIDENCE
         # -----------------------
-        if abs(edge) > 0.75:
+        if abs(edge) > 1:
             confidence = "HIGH"
-        elif abs(edge) > 0.4:
+        elif abs(edge) > 0.6:
             confidence = "MEDIUM"
-        elif abs(edge) > 0.25:
+        elif abs(edge) > 0.3:
             confidence = "LOW"
         else:
             confidence = "PASS"
-
-        # -----------------------
-        # MARKET SHARPNESS (BONUS)
-        # -----------------------
-        spread = get_market_spread(game)
-
-        if spread >= 1:
-            steam = "🔥 Wide Market (Possible Edge)"
-        else:
-            steam = "Normal"
 
         results.append({
             "game": f"{away} vs {home}",
@@ -103,9 +76,7 @@ def run_model(games):
             "projection": projection,
             "edge": edge,
             "pick": pick,
-            "confidence": confidence,
-            "market_spread": spread,
-            "steam": steam
+            "confidence": confidence
         })
 
     return results
