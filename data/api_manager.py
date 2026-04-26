@@ -3,9 +3,9 @@ import json
 import time
 import os
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "e5c1ba4c3752d7fec9907b519034a574"
 CACHE_FILE = "cache/odds.json"
-CACHE_TTL = 600  # 10 min
+CACHE_TTL = 600  # 10 minutes
 
 
 def _load_cache():
@@ -30,6 +30,7 @@ def _save_cache(data, usage):
 def _valid(cache):
     if not cache:
         return False
+
     return (time.time() - cache["timestamp"]) < CACHE_TTL
 
 
@@ -43,15 +44,27 @@ def _fetch():
         "oddsFormat": "american"
     }
 
-    r = requests.get(url, params=params)
-    data = r.json()
+    try:
+        r = requests.get(url, params=params)
 
-    usage = {
-        "used": int(r.headers.get("x-requests-used", 0)),
-        "remaining": int(r.headers.get("x-requests-remaining", 0))
-    }
+        print("STATUS:", r.status_code)
+        print("BODY:", r.text[:300])
 
-    return data, usage
+        if r.status_code != 200:
+            return [], {"used": 0, "remaining": 0}
+
+        data = r.json()
+
+        usage = {
+            "used": int(r.headers.get("x-requests-used", 0)),
+            "remaining": int(r.headers.get("x-requests-remaining", 0))
+        }
+
+        return data, usage
+
+    except Exception as e:
+        print("API ERROR:", str(e))
+        return [], {"used": 0, "remaining": 0}
 
 
 def get_odds(force_refresh=False):
@@ -61,7 +74,8 @@ def get_odds(force_refresh=False):
     if not force_refresh and _valid(cache):
         return cache["data"], cache["usage"]
 
-    if cache and cache["usage"]["remaining"] <= 1:
+    # prevent hitting API if quota is dead
+    if cache and cache["usage"]["remaining"] <= 0:
         return cache["data"], cache["usage"]
 
     data, usage = _fetch()
