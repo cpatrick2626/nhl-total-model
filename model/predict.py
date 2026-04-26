@@ -1,5 +1,3 @@
-# model/predict.py
-
 from utils.tracker import load_bets, calculate_bankroll
 from utils.risk_engine import (
     get_risk_multiplier,
@@ -12,9 +10,6 @@ from utils.risk_engine import (
 )
 
 
-# -----------------------------
-# EXTRACT TOTALS MARKET
-# -----------------------------
 def extract_totals(game):
 
     best = None
@@ -22,10 +17,8 @@ def extract_totals(game):
     for book in game.get("bookmakers", []):
         for market in book.get("markets", []):
             if market.get("key") == "totals":
-
                 for outcome in market.get("outcomes", []):
                     if outcome.get("name") == "Over":
-
                         if not best or outcome["price"] > best["price"]:
                             best = outcome
 
@@ -38,18 +31,10 @@ def extract_totals(game):
     }
 
 
-# -----------------------------
-# SIMPLE PROJECTION MODEL
-# -----------------------------
 def project_total():
-
-    # baseline NHL average
     return 6.0
 
 
-# -----------------------------
-# EV CALCULATION
-# -----------------------------
 def calc_ev(prob, odds):
 
     if odds > 0:
@@ -60,14 +45,10 @@ def calc_ev(prob, odds):
     return prob - implied
 
 
-# -----------------------------
-# SCORE SYSTEM
-# -----------------------------
 def score_play(ev, edge):
 
     score = 0
 
-    # EV weight
     if ev >= 0.10:
         score += 4
     elif ev >= 0.07:
@@ -75,7 +56,6 @@ def score_play(ev, edge):
     elif ev >= 0.05:
         score += 2
 
-    # edge weight
     if edge >= 1.0:
         score += 3
     elif edge >= 0.6:
@@ -86,21 +66,13 @@ def score_play(ev, edge):
     return score
 
 
-# -----------------------------
-# MAIN MODEL
-# -----------------------------
 def run_model(games):
 
     bets = load_bets()
-    bankroll = calculate_bankroll()
+    bankroll = calculate_bankroll(start=100)
 
-    results = []
+    parsed = []
 
-    parsed_games = []
-
-    # -----------------------------
-    # PREPROCESS GAMES
-    # -----------------------------
     for g in games:
 
         market = extract_totals(g)
@@ -111,38 +83,29 @@ def run_model(games):
         odds = market["odds"]
 
         projection = project_total()
-
-        # crude probability from projection difference
         edge = projection - line
-        prob = 0.5 + (edge * 0.1)
 
+        prob = 0.5 + (edge * 0.1)
         ev = calc_ev(prob, odds)
         score = score_play(ev, abs(edge))
 
-        parsed_games.append({
+        parsed.append({
             "game": f"{g.get('away_team')} vs {g.get('home_team')}",
             "line": line,
             "projection": projection,
-            "edge": edge,
-            "odds": odds,
             "ev": ev,
             "score": score,
-            "fd_edge": 0,   # placeholder for now
+            "fd_edge": 0,
             "steam": None,
             "rlm": None
         })
 
-    # -----------------------------
-    # GLOBAL DECISION
-    # -----------------------------
-    elite_count = sum(1 for g in parsed_games if g["score"] >= 8)
-
+    elite_count = sum(1 for g in parsed if g["score"] >= 8)
     decision = go_no_go_decision(bankroll, bets, elite_count)
 
-    # -----------------------------
-    # FINAL LOOP
-    # -----------------------------
-    for g in parsed_games:
+    results = []
+
+    for g in parsed:
 
         if decision == "NO-GO":
             continue
@@ -161,25 +124,13 @@ def run_model(games):
             risk_mode
         )
 
-        # base bet size (2%)
-        base_bet = bankroll * 0.02
-
-        risk_mult = get_risk_multiplier(bets, bankroll)
-        boost = max_conf_boost(max_conf)
-
-        bet_size = base_bet * risk_mult * boost
+        base = bankroll * 0.02
+        bet = base * get_risk_multiplier(bets, bankroll) * max_conf_boost(max_conf)
 
         results.append({
-            "game": g["game"],
-            "line": g["line"],
-            "projection": g["projection"],
-            "ev": round(g["ev"], 4),
-            "adj_ev": round(adj_ev, 4),
-            "score": g["score"],
-            "fd_edge": g["fd_edge"],
-            "steam": g["steam"],
-            "rlm": g["rlm"],
-            "bet_size": round(bet_size, 2),
+            **g,
+            "adj_ev": adj_ev,
+            "bet_size": round(bet, 2),
             "risk_mode": risk_mode,
             "risk_score": risk_score,
             "max_conf": max_conf,
