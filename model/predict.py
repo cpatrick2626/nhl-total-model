@@ -1,77 +1,111 @@
-# model/predict.py
+import numpy as np
 
-import random
+def extract_totals(game):
+    lines = []
 
-
-def extract_total_line(game):
     for book in game.get("bookmakers", []):
         for market in book.get("markets", []):
-            if market["key"] == "totals":
-                for outcome in market["outcomes"]:
-                    if outcome["name"] == "Over":
-                        return outcome.get("point"), outcome.get("price")
-    return None, None
+            if market.get("key") == "totals":
+                for outcome in market.get("outcomes", []):
+                    if "point" in outcome:
+                        lines.append(outcome["point"])
+
+    if not lines:
+        return None
+
+    return round(sum(lines) / len(lines), 2)
 
 
-def estimate_game_total(game):
-    """
-    VERY SIMPLE baseline model (we improve later)
-    """
+def get_market_spread(game):
+    """Measure disagreement between books (proxy for volatility/value)"""
+    lines = []
 
-    # Placeholder logic (replace later with real stats)
-    base = 6
+    for book in game.get("bookmakers", []):
+        for market in book.get("markets", []):
+            if market.get("key") == "totals":
+                for outcome in market.get("outcomes", []):
+                    if "point" in outcome:
+                        lines.append(outcome["point"])
 
-    # Add slight variation so it's not dead flat
-    variation = random.uniform(-0.8, 0.8)
+    if len(lines) < 2:
+        return 0
 
-    return round(base + variation, 2)
+    return max(lines) - min(lines)
 
 
 def run_model(games):
-
     results = []
 
     for game in games:
+        away = game.get("away_team")
+        home = game.get("home_team")
 
-        line, over_price = extract_total_line(game)
+        line = extract_totals(game)
 
         if line is None:
             continue
 
-        projection = estimate_game_total(game)
+        # -----------------------
+        # REALISTIC PROJECTION ENGINE
+        # -----------------------
 
-        diff = projection - line
+        # Base = market line (Vegas is sharp whether you like it or not)
+        projection = line
+
+        # Add randomness (simulate team variance)
+        projection += np.random.normal(0, 0.35)
+
+        # Add adjustment for line extremes
+        if line <= 5.5:
+            projection += 0.25   # low totals tend to go over slightly
+        elif line >= 6.5:
+            projection -= 0.25   # high totals slightly under
+
+        projection = round(projection, 2)
 
         # -----------------------
-        # DECISION LOGIC
+        # EDGE CALCULATION
         # -----------------------
-        if diff > 0.4:
+        edge = round(projection - line, 2)
+
+        if edge > 0.25:
             pick = "OVER"
-            confidence = "STRONG"
-
-        elif diff > 0.15:
-            pick = "OVER"
-            confidence = "LEAN"
-
-        elif diff < -0.4:
+        elif edge < -0.25:
             pick = "UNDER"
-            confidence = "STRONG"
-
-        elif diff < -0.15:
-            pick = "UNDER"
-            confidence = "LEAN"
-
         else:
             pick = "NO BET"
-            confidence = "NONE"
+
+        # -----------------------
+        # CONFIDENCE
+        # -----------------------
+        if abs(edge) > 0.75:
+            confidence = "HIGH"
+        elif abs(edge) > 0.4:
+            confidence = "MEDIUM"
+        elif abs(edge) > 0.25:
+            confidence = "LOW"
+        else:
+            confidence = "PASS"
+
+        # -----------------------
+        # MARKET SHARPNESS (BONUS)
+        # -----------------------
+        spread = get_market_spread(game)
+
+        if spread >= 1:
+            steam = "🔥 Wide Market (Possible Edge)"
+        else:
+            steam = "Normal"
 
         results.append({
-            "game": f"{game['away_team']} @ {game['home_team']}",
+            "game": f"{away} vs {home}",
             "line": line,
             "projection": projection,
+            "edge": edge,
             "pick": pick,
             "confidence": confidence,
-            "edge": round(diff, 2)
+            "market_spread": spread,
+            "steam": steam
         })
 
     return results
