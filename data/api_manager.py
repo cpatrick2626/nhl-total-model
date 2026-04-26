@@ -32,6 +32,33 @@ def valid(cache):
     return (time.time() - cache["timestamp"]) < CACHE_TTL
 
 
+def parse_usage(headers):
+    """
+    Safely parse API usage headers.
+    Returns real values OR 'N/A' if not provided.
+    """
+
+    used = headers.get("x-requests-used")
+    remaining = headers.get("x-requests-remaining")
+
+    if used is None or remaining is None:
+        return {
+            "used": "N/A",
+            "remaining": "N/A"
+        }
+
+    try:
+        return {
+            "used": int(used),
+            "remaining": int(remaining)
+        }
+    except:
+        return {
+            "used": "N/A",
+            "remaining": "N/A"
+        }
+
+
 def fetch():
 
     url = "https://api.the-odds-api.com/v4/sports/icehockey_nhl/odds"
@@ -47,19 +74,17 @@ def fetch():
         r = requests.get(url, params=params)
 
         if r.status_code != 200:
-            return [], {"used": 0, "remaining": 0}
+            return [], {"used": "N/A", "remaining": "N/A"}
 
         data = r.json()
 
-        usage = {
-            "used": int(r.headers.get("x-requests-used", 0)),
-            "remaining": int(r.headers.get("x-requests-remaining", 0))
-        }
+        # 🔥 FIXED HERE
+        usage = parse_usage(r.headers)
 
         return data, usage
 
     except:
-        return [], {"used": 0, "remaining": 0}
+        return [], {"used": "N/A", "remaining": "N/A"}
 
 
 def get_odds(force_refresh=False):
