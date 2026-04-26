@@ -41,15 +41,18 @@ def _fetch():
     params = {
         "apiKey": API_KEY,
         "regions": "us",
-        "markets": "totals,alternate_totals",
-        "oddsFormat": "american"
+        # 🔥 IMPORTANT CHANGE
+        "markets": "h2h,totals,alternate_totals",
+        "oddsFormat": "decimal"
     }
 
     try:
         r = requests.get(url, params=params)
 
+        print("STATUS:", r.status_code)
+        print("BODY:", r.text[:300])
+
         if r.status_code != 200:
-            print("API ERROR:", r.text)
             return [], {"used": 0, "remaining": 0}
 
         data = r.json()
@@ -62,7 +65,7 @@ def _fetch():
         return data, usage
 
     except Exception as e:
-        print("API EXCEPTION:", str(e))
+        print("API ERROR:", str(e))
         return [], {"used": 0, "remaining": 0}
 
 
