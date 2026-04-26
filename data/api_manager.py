@@ -4,8 +4,9 @@ import time
 import os
 
 API_KEY = "e5c1ba4c3752d7fec9907b519034a574"
+
 CACHE_FILE = "cache/odds.json"
-CACHE_TTL = 600  # 10 minutes
+CACHE_TTL = 600
 
 
 def _load_cache():
@@ -47,10 +48,8 @@ def _fetch():
     try:
         r = requests.get(url, params=params)
 
-        print("STATUS:", r.status_code)
-        print("BODY:", r.text[:300])
-
         if r.status_code != 200:
+            print("API ERROR:", r.text)
             return [], {"used": 0, "remaining": 0}
 
         data = r.json()
@@ -63,7 +62,7 @@ def _fetch():
         return data, usage
 
     except Exception as e:
-        print("API ERROR:", str(e))
+        print("API EXCEPTION:", str(e))
         return [], {"used": 0, "remaining": 0}
 
 
@@ -72,10 +71,6 @@ def get_odds(force_refresh=False):
     cache = _load_cache()
 
     if not force_refresh and _valid(cache):
-        return cache["data"], cache["usage"]
-
-    # prevent hitting API if quota is dead
-    if cache and cache["usage"]["remaining"] <= 0:
         return cache["data"], cache["usage"]
 
     data, usage = _fetch()
