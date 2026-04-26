@@ -8,27 +8,27 @@ st.set_page_config(layout="wide")
 st.title("🏒 NHL TOTAL MODEL")
 
 # -----------------------
-# LOAD DATA (SAFE INIT)
+# LOAD DATA
 # -----------------------
+def load_data(force=False):
+    data, usage = get_odds(force_refresh=force)
+    st.session_state.data = data if isinstance(data, list) else []
+    st.session_state.usage = usage if isinstance(usage, dict) else {}
+
+# init
 if "data" not in st.session_state:
-    data, usage = get_odds()
-    st.session_state.data = data
-    st.session_state.usage = usage
+    load_data()
 
 # -----------------------
-# REFRESH BUTTON
+# SIDEBAR
 # -----------------------
+st.sidebar.markdown("### Controls")
+
 if st.sidebar.button("🔄 Refresh Data"):
-    data, usage = get_odds(force_refresh=True)
-    st.session_state.data = data
-    st.session_state.usage = usage
+    load_data(force=True)
 
-games = st.session_state.get("data", [])
 usage = st.session_state.get("usage", {})
 
-# -----------------------
-# SIDEBAR (FIXED USAGE DISPLAY)
-# -----------------------
 st.sidebar.markdown("### API Usage")
 
 used = usage.get("used", "N/A")
@@ -38,10 +38,27 @@ st.sidebar.write("Used:", used)
 st.sidebar.write("Remaining:", remaining)
 
 # -----------------------
-# MAIN DISPLAY
+# DATA
+# -----------------------
+games = st.session_state.get("data", [])
+
+st.subheader("📅 Games Pulled")
+
+st.write(f"Total Games: {len(games)}")
+
+# -----------------------
+# HANDLE NO DATA
 # -----------------------
 if not games:
-    st.warning("No games available right now.")
+    st.warning("No games returned from API.")
+
+    st.markdown("""
+    Possible reasons:
+    - Odds not posted yet  
+    - Wrong region/market filters  
+    - API delay  
+    """)
+
     st.stop()
 
 # -----------------------
@@ -49,31 +66,52 @@ if not games:
 # -----------------------
 results = run_model(games)
 
+# -----------------------
+# RAW GAME LIST (ALWAYS SHOW)
+# -----------------------
+game_list = [
+    f"{g.get('away_team')} @ {g.get('home_team')}"
+    for g in games
+]
+
+st.subheader("🧾 Game List")
+st.write(game_list)
+
+# -----------------------
+# MODEL OUTPUT
+# -----------------------
+st.subheader("📊 Model Output")
+
 if not results:
-    st.warning("Model returned no results.")
+    st.warning("Model returned no betting results.")
     st.stop()
 
 df = pd.DataFrame(results)
 
-# -----------------------
-# CLEAN DISPLAY
-# -----------------------
-st.subheader("📊 Model Output")
-
-# reorder if fields exist
+# reorder columns safely
 cols = ["game", "projection", "bet", "odds", "edge"]
 df = df[[c for c in cols if c in df.columns]]
 
 st.dataframe(df, use_container_width=True)
 
 # -----------------------
-# SUMMARY (QUICK READ)
+# EDGE SUMMARY
 # -----------------------
-st.subheader("📌 Quick Summary")
+st.subheader("📌 Edge Summary")
 
-plays = df[df.get("edge", 0) > 0.02] if "edge" in df else []
+if "edge" in df.columns:
+    plays = df[df["edge"] > 0.02]
 
-if len(plays) > 0:
-    st.success(f"{len(plays)} potential plays found")
+    if not plays.empty:
+        st.success(f"{len(plays)} playable edges found")
+        st.dataframe(plays, use_container_width=True)
+    else:
+        st.info("No strong edges right now")
 else:
-    st.info("No strong edges right now")
+    st.info("No edge data available")
+
+# -----------------------
+# DEBUG (OPTIONAL)
+# -----------------------
+with st.expander("🔍 Debug Info"):
+    st.write("Sample Game:", games[0] if games else "None")
