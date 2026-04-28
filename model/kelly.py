@@ -4,5 +4,4 @@ def kelly(prob, odds=-110):
     else:
         b = odds / 100
 
-    k = (prob * (b + 1) - 1) / b
-    return max(k, 0)
+    return max((prob * (b + 1) - 1) / b, 0)
