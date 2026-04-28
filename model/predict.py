@@ -3,6 +3,19 @@ from model.projection import project_total
 from model.kelly import kelly
 
 
+def extract_totals(game):
+    bookmakers = game.get("bookmakers", [])
+
+    for book in bookmakers:
+        for market in book.get("markets", []):
+            if market.get("key") == "totals":
+                for o in market.get("outcomes", []):
+                    if "Over" in o.get("name", ""):
+                        return o.get("point")
+
+    return None
+
+
 def prob_over(line, projection):
     return 1 - norm.cdf(line, projection, 1.5)
 
@@ -24,7 +37,6 @@ def run_model(games):
         edge = round(prob - 0.5, 4)
         pick = "OVER" if prob > 0.5 else "UNDER"
 
-        # ALT LOGIC
         if projection >= 6.8:
             alt = "Over 5.5"
         elif projection <= 5.2:
@@ -32,7 +44,6 @@ def run_model(games):
         else:
             alt = "Under 7.5"
 
-        # CONFIDENCE
         if edge > 0.07:
             confidence = "HIGH"
         elif edge > 0.04:
