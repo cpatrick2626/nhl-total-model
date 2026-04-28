@@ -1,3 +1,8 @@
-def kelly(prob, odds):
-    b = 100 / abs(odds) if odds < 0 else odds / 100
-    return max(0, (b * prob - (1 - prob)) / b)
+def kelly(prob, odds=-110):
+    if odds < 0:
+        b = 100 / abs(odds)
+    else:
+        b = odds / 100
+
+    k = (prob * (b + 1) - 1) / b
+    return max(k, 0)
