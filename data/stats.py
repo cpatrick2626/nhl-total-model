@@ -10,7 +10,6 @@ def get_team_stats():
 
     for t in r.get("standings", []):
         name = t["teamName"]["default"]
-
         gp = max(t.get("gamesPlayed", 1), 1)
 
         teams[name] = {
