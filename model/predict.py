@@ -1,82 +1,57 @@
-import numpy as np
-import random
+from scipy.stats import norm
+from model.projection import project_total
+from model.kelly import kelly
 
 
-def extract_totals(game):
-    lines = []
-
-    for book in game.get("bookmakers", []):
-        for market in book.get("markets", []):
-            if market.get("key") == "totals":
-                for outcome in market.get("outcomes", []):
-                    if "point" in outcome:
-                        lines.append(outcome["point"])
-
-    if not lines:
-        return None
-
-    return round(sum(lines) / len(lines), 2)
+def prob_over(line, projection):
+    return 1 - norm.cdf(line, projection, 1.5)
 
 
 def run_model(games):
     results = []
 
-    for game in games:
-        away = game.get("away_team")
-        home = game.get("home_team")
+    for g in games:
+        home = g.get("home_team")
+        away = g.get("away_team")
 
-        line = extract_totals(game)
-
-        if line is None:
+        line = extract_totals(g)
+        if not line:
             continue
 
-        # -----------------------
-        # FORCE REAL VARIATION
-        # -----------------------
-        projection = line
+        projection = project_total(home, away)
+        prob = prob_over(line, projection)
 
-        # Stronger variation so it actually shows
-        projection += random.uniform(-1.0, 1.0)
+        edge = round(prob - 0.5, 4)
+        pick = "OVER" if prob > 0.5 else "UNDER"
 
-        # Slight bias logic
-        if line <= 5.5:
-            projection += 0.3
-        elif line >= 6.5:
-            projection -= 0.3
-
-        projection = round(projection, 2)
-
-        # -----------------------
-        # EDGE
-        # -----------------------
-        edge = round(projection - line, 2)
-
-        if edge > 0.3:
-            pick = "OVER"
-        elif edge < -0.3:
-            pick = "UNDER"
+        # ALT LOGIC
+        if projection >= 6.8:
+            alt = "Over 5.5"
+        elif projection <= 5.2:
+            alt = "Under 6.5"
         else:
-            pick = "NO BET"
+            alt = "Under 7.5"
 
-        # -----------------------
         # CONFIDENCE
-        # -----------------------
-        if abs(edge) > 1:
+        if edge > 0.07:
             confidence = "HIGH"
-        elif abs(edge) > 0.6:
+        elif edge > 0.04:
             confidence = "MEDIUM"
-        elif abs(edge) > 0.3:
-            confidence = "LOW"
         else:
-            confidence = "PASS"
+            confidence = "LOW"
+
+        units = round(kelly(prob) * 0.25, 2)
 
         results.append({
-            "game": f"{away} vs {home}",
+            "game": f"{away} @ {home}",
             "line": line,
             "projection": projection,
             "edge": edge,
             "pick": pick,
-            "confidence": confidence
+            "alt_pick": alt,
+            "confidence": confidence,
+            "units": units,
+            "steam": False
         })
 
     return results
